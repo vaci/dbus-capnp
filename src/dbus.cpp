@@ -9,6 +9,7 @@
 #include <capnp/dynamic.h>
 #include <kj/array.h>
 #include <kj/async.h>
+#include <kj/async-unix.h>
 #include <kj/debug.h>
 #include <kj/refcount.h>
 #include <kj/timer.h>
@@ -32,74 +33,7 @@ namespace dbus {
 
   namespace {
 
-  kj::Promise<void> append(sd_bus_message* msg, Field::Reader field) {
-    auto which = field.which();
-    using Which = decltype(which);
-      switch (which) {
-      case Which::BYTE:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "y", field.getByte()) >= 0);
-	return kj::READY_NOW;
-      case Which::BOOL:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "b", field.getBool()) >= 0);
-	return kj::READY_NOW;
-      case Which::INT16:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "n", field.getInt16()) >= 0);
-	return kj::READY_NOW;
-      case Which::UINT16:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "q", field.getUint16()) >= 0);
-	return kj::READY_NOW;
-      case Which::INT32:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "i", field.getInt32()) >= 0);
-	return kj::READY_NOW;
-      case Which::UINT32:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "u", field.getUint32()) >= 0);
-	return kj::READY_NOW;
-      case Which::INT64:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "x", field.getInt64()) >= 0);
-	return kj::READY_NOW;
-      case Which::UINT64:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "t", field.getUint64()) >= 0);
-	return kj::READY_NOW;
-      case Which::DOUBLE:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "d", field.getDouble()) >= 0);
-	return kj::READY_NOW;
-      case Which::STRING:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "s", field.getString()) >= 0);
-	return kj::READY_NOW;
-      case Which::OBJECT_PATH:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "o", field.getObjectPath()) >= 0);
-	return kj::READY_NOW;
-      case Which::SIGNATURE:
-	KJ_REQUIRE(::sd_bus_message_append(msg, "g", field.getSignature()) >= 0);
-	return kj::READY_NOW;
-      case Which::UNIX: {
-	sd_bus_message_ref(msg);
-	return
-	  field.getUnix().getFd()
-	  .then(
-	    [msg](auto maybeFd) {
-	      KJ_IF_MAYBE(fd, maybeFd) {
-		KJ_REQUIRE(::sd_bus_message_append(msg, "h", fd) >= 0);
-	      }
-	    }
-	  )
-	  .attach(
-	    kj::defer([msg]{ ::sd_bus_message_unref(msg); })
-	  );
-      }
-      default:
-	return kj::READY_NOW;
-      }
-    }
-
     struct BusServer;
-
-    struct Slot {
-      ~Slot();
-
-      sd_bus_slot* slot_;
-      kj::Own<kj::PromiseFulfiller<sd_bus_message*>> fulfiller_;
-    };
 
     struct BusServer
       : Bus::Server
@@ -111,25 +45,7 @@ namespace dbus {
 	return kj::addRef(*this);
       }
 
-      void handleMessage(sd_bus_message* msg, sd_bus_error* err) {
-      }
-
-      static int handleMessage(sd_bus_message* msg, void* userdata, sd_bus_error* err) {
-	auto slot = reinterpret_cast<Slot*>(userdata);
-	if (::sd_bus_error_is_set(err)) {
-	  auto name = err->name;
-	  auto message = err->message;
-	  slot->fulfiller_->reject(KJ_EXCEPTION(FAILED, err, message));
-	}
-	else {
-	  sd_bus_message_ref(msg);
-	  slot->fulfiller_->fulfill(kj::mv(msg));
-	}
-	return 0;
-      }
-
-
-      BusServer(kj::Timer& timer, sd_bus*);
+      BusServer(kj::UnixEventPort& port_, kj::Timer& timer, sd_bus*);
       ~BusServer();
 
       kj::Promise<void> call(CallContext ctx) override;
@@ -139,29 +55,28 @@ namespace dbus {
       }
 
       kj::Promise<void> poll() {
-	return
-	  timer_.afterDelay(kj::MILLISECONDS*200)
-	  .then(
-	    [this]{
-	      int fd = ::sd_bus_get_fd(bus_);
-	      int events = ::sd_bus_get_events(bus_);
-	      //uint64_t timeout;
-	      //::sd_bus_get_timeout(bus_, &timeout);
+	int fd = ::sd_bus_get_fd(bus_);
+	int events = ::sd_bus_get_events(bus_);
+	uint64_t timeout;
+	KJ_REQUIRE(::sd_bus_get_timeout(bus_, &timeout) >= 0);
 
-	      struct pollfd fds[1];
-	      fds[0].fd = fd;
-	      fds[0].events = events;
-	      ::poll(fds, 1, 0);
-	      sd_bus_message* msg;
-	      ::sd_bus_process(bus_, &msg);
-	      if (msg == nullptr) {
-		//KJ_LOG(INFO, "Progress made!", events);
+	auto flags = kj::UnixEventPort::FdObserver::OBSERVE_READ_WRITE;
+	auto obs = kj::heap<kj::UnixEventPort::FdObserver>(port_, fd, flags);
+
+	return
+	  timer_.timeoutAfter(
+	    timeout * kj::MICROSECONDS,
+	    obs->whenBecomesReadable()
+	    .then(
+	      [this]{
+		sd_bus_message* msg;
+		int err;
+		do {
+		  err = ::sd_bus_process(bus_, &msg);
+		} while (err > 0);
 	      }
-	      else {
-		KJ_LOG(INFO, "Got message");
-	      }
-				   
-	    }
+	    )
+	    .attach(kj::mv(obs))
 	  )
 	  .then(
 	    [this]{
@@ -170,23 +85,23 @@ namespace dbus {
 	  );
       }
 
+      kj::UnixEventPort& port_;
       kj::Timer& timer_;
       sd_bus* bus_;
+      kj::Canceler cancel_;
       kj::TaskSet tasks_{*this};
     };
   }
 
-  Slot::~Slot() {
-    ::sd_bus_slot_unref(slot_);
-  }
-
-  BusServer::BusServer(kj::Timer& timer, sd_bus* bus)
-    : timer_{timer}
+  BusServer::BusServer(kj::UnixEventPort& port, kj::Timer& timer, sd_bus* bus)
+    : port_{port}
+    , timer_{timer}
     , bus_{bus} {
-    tasks_.add(poll());
+    tasks_.add(cancel_.wrap(poll()));
   }
 
   BusServer::~BusServer() {
+    cancel_.cancel(KJ_EXCEPTION(DISCONNECTED));
     ::sd_bus_close(bus_);
   }
 
@@ -209,56 +124,26 @@ namespace dbus {
 
     kj::Promise<void> promise = kj::READY_NOW;
     for (auto field: fields) {
-      promise = promise.then([msg, field]{ return append(msg, field); });
+      promise = promise.then([msg, field]{ return _::append(msg, field); });
     }
 
     return
       promise.then(
         [this,  ctx = kj::mv(ctx), msg]() mutable {
-	  auto slot = kj::heap<Slot>();
-	  auto paf = kj::newPromiseAndFulfiller<sd_bus_message*>();
-	  slot->fulfiller_ = kj::mv(paf.fulfiller);
-
-	  KJ_REQUIRE(::sd_bus_call_async(
-	   bus_,
-	   &slot->slot_,
-	   msg,
-	   &BusServer::handleMessage, slot,
-	   0) >= 0);
-
 	  return
-	    paf.promise.then(
-	      [ctx = kj::mv(ctx)](auto msg) mutable {
-		::sd_bus_message_dump(msg, stderr, 0);
-		::sd_bus_message_rewind(msg, 0);
+	    _::call(bus_, msg)
+	    .then(
+		  [ctx = kj::mv(ctx)](auto msg) mutable -> kj::Promise<void> {
+		//::sd_bus_message_dump(msg, stderr, 0);
+		//::sd_bus_message_rewind(msg, 0);
 		if (::sd_bus_message_is_method_error(msg, nullptr)) {
-		  auto* err = ::sd_bus_message_get_error(msg);
-		  auto errname = err->name;
-		  auto errmsg  = err->message;
-		  throw KJ_EXCEPTION(FAILED, errname, errmsg);
+		  return _::err(msg);
 		}
 		
-	       auto reply = ctx.getResults();
-	       KJ_IF_MAYBE(value, ::sd_bus_message_get_destination(msg)) {
-		 reply.setDestination(value);
-	       }
-	       KJ_IF_MAYBE(value, ::sd_bus_message_get_path(msg)) {
-		 reply.setPath(value);
-	       }
-	       KJ_IF_MAYBE(value, ::sd_bus_message_get_interface(msg)) {
-		 reply.setIface(value);
-	       }
-	       KJ_IF_MAYBE(value, ::sd_bus_message_get_member(msg)) {
-		 reply.setMember(value);
-	       }
-	       {
-		 auto orphanage = capnp::Orphanage::getForMessageContaining(reply);
-		 auto fields = extract(msg, orphanage);
-		 reply.adoptFields(kj::mv(fields));
-	       }
+	       _::build(ctx.getResults(), msg);
+	       return kj::READY_NOW;
 	      }
-	    )
-	    .attach(kj::mv(slot));
+	    );
 	}
      );
   }
@@ -271,75 +156,21 @@ namespace dbus {
       capnp::CallContext<capnp::DynamicStruct, capnp::DynamicStruct> ctx) override {
 
       auto req = bus_.callRequest();
-      
       auto name = method.getProto().getName();
-
       req.setMember(name);
-      
-      auto params = ctx.getParams();
-      auto schema = params.getSchema();
-
-      
-      auto fields = req.initFields(schema.getFields().size());
-      
-      for (auto ii: kj::indices(fields)) {
-	auto type = schema.getFields()[ii].getType();
-	auto param = params.get(schema.getFields()[ii]);
-	auto which = type.which();
-	using Which = decltype(which);
-	switch (which) {
-	case Which::UINT8: {
-	  fields[ii].setByte(param.as<capnp::byte>());
-	  break;
-	}
-	case Which::BOOL: {
-	  fields[ii].setBool(param.as<bool>());
-	  break;
-	}
-	case Which::INT16: {
-	  fields[ii].setInt32(param.as<int32_t>());
-	  break;
-	}
-	case Which::UINT16: {
-	  fields[ii].setUint64(param.as<uint32_t>());
-	  break;
-	}
-	case Which::INT32: {
-	  fields[ii].setInt32(param.as<int32_t>());
-	  break;
-	}
-	case Which::UINT32: {
-	  fields[ii].setUint64(param.as<uint32_t>());
-	  break;
-	}
-	case Which::INT64: {
-	  fields[ii].setInt64(param.as<int64_t>());
-	  break;
-	}
-	case Which::UINT64: {
-	  fields[ii].setUint64(param.as<uint64_t>());
-	  break;
-	}
-	case Which::FLOAT32: {
-	  fields[ii].setDouble(param.as<float>());
-	  break;
-	}
-	case Which::FLOAT64: {
-	  fields[ii].setDouble(param.as<double>());
-	  break;
-	}
-	case Which::TEXT: {
-	  fields[ii].setString(param.as<capnp::Text>());
-	  break;
-	}
-	case Which::INTERFACE:
-	  fields[ii].setUnix(param.as<capnp::Capability>());
-	  break;
-	}
-      }
+      _::setFields(req, ctx.getParams());
      
-      
-      return kj::READY_NOW;
+      return
+	req.send()
+	.then(
+	      [ctx = kj::mv(ctx)](auto msg) mutable {
+		auto reply = ctx.getResults();
+		auto schema = reply.getSchema();
+		for (auto ii: kj::indices(msg.getFields())) {
+		}
+	      }
+	      );
+	      
     }
 
     Bus::Client bus_{nullptr};
@@ -348,8 +179,9 @@ namespace dbus {
   struct DbusServer
     : Dbus::Server {
 
-    DbusServer(kj::Timer& timer)
-      : timer_{timer} {
+    DbusServer(kj::UnixEventPort& port, kj::Timer& timer)
+      : port_{port}
+      , timer_{timer} {
     }
 
     kj::Promise<void> user(UserContext ctx) override {
@@ -358,7 +190,7 @@ namespace dbus {
       auto reply = ctx.getResults();
       ::sd_bus* bus;
       KJ_REQUIRE(::sd_bus_open_user_with_description(&bus, desc.cStr()) >= 0);
-      reply.setBus(kj::refcounted<BusServer>(timer_, bus));
+      reply.setBus(kj::refcounted<BusServer>(port_, timer_, bus));
       return kj::READY_NOW;
     }
 
@@ -368,14 +200,15 @@ namespace dbus {
       auto reply = ctx.getResults();
       ::sd_bus* bus;
       KJ_REQUIRE(::sd_bus_open_system_with_description(&bus, desc.cStr()) >= 0);
-      reply.setBus(kj::refcounted<BusServer>(timer_, bus));
+      reply.setBus(kj::refcounted<BusServer>(port_, timer_, bus));
       return kj::READY_NOW;
     }
- 
+
+    kj::UnixEventPort& port_; 
     kj::Timer& timer_;
   };
 
-  Dbus::Client newDbus(kj::Timer& timer) {
-    return kj::heap<DbusServer>(timer);
+  Dbus::Client newDbus(kj::UnixEventPort& port, kj::Timer& timer) {
+    return kj::heap<DbusServer>(port, timer);
   }
 }

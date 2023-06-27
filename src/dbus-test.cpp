@@ -28,7 +28,7 @@ struct ConfigTest
 
 TEST_F(ConfigTest, Basic) {
 
-  auto dbus = newDbus(ioCtx_.provider->getTimer());
+  auto dbus = newDbus(ioCtx_.unixEventPort, ioCtx_.provider->getTimer());
   auto req = dbus.systemRequest();
   auto bus = req.send().getBus();
   {
