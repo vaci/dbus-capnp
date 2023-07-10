@@ -16,16 +16,16 @@ namespace dbus {
 
   namespace _ {
 
-  kj::Exception err(::sd_bus_message* msg) {
-    auto* err = ::sd_bus_message_get_error(msg);
+  kj::Exception err(sd_bus_message* msg) {
+    auto* err = sd_bus_message_get_error(msg);
     auto errname = err->name;
     auto errmsg  = err->message;
     return KJ_EXCEPTION(FAILED, errname, errmsg);
   }
 
-  auto ref(::sd_bus_message* msg) {
+  auto ref(sd_bus_message* msg) {
     sd_bus_message_ref(msg);
-    return kj::defer([msg] { ::sd_bus_message_unref(msg); });
+    return kj::defer([msg] { sd_bus_message_unref(msg); });
   }
 
   namespace {
@@ -44,7 +44,7 @@ namespace dbus {
       char type;
       const char* contents;
       int err;
-      KJ_REQUIRE((err = ::sd_bus_message_peek_type(msg, &type, &contents)) >= 0);
+      KJ_REQUIRE((err = sd_bus_message_peek_type(msg, &type, &contents)) >= 0);
       if (err == 0) {
 	break;
       }
@@ -54,86 +54,86 @@ namespace dbus {
       switch (type) {
       case 'y': {
 	capnp::byte value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setByte(value);
 	break;
       }
       case 'b': {
 	int value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setBool(value);
 	break;
       }
       case 'n': {
 	int16_t value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setInt16(value);
 	break;
       }
       case 'q': {
 	uint16_t value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setUint16(value);
 	break;
       }
       case 'i': {
 	int32_t value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setInt32(value);
 	break;
       }
       case 'u': {
 	uint32_t value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setUint32(value);
 	break;
       }
       case 'x': {
 	int64_t value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setInt64(value);
 	break;
       }
       case 't': {
 	uint64_t value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setUint64(value);
 	break;
       }
       case 'd': {
 	double value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setDouble(value);
 	break;
       }
       case 'g': {
 	const char* value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setSignature(value);
 	break;
       }
       case 'o': {
 	const char* value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setObjectPath(value);
 	break;
       }
       case 's': {
 	const char* value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	field.setString(value);
 	break;
       }
       case 'a': {
-	::sd_bus_message_enter_container(msg, SD_BUS_TYPE_ARRAY, contents);
+	sd_bus_message_enter_container(msg, SD_BUS_TYPE_ARRAY, contents);
 	auto content = extract(msg, orphanage);
 	field.adoptArray(kj::mv(content));
-	::sd_bus_message_exit_container(msg);
+	sd_bus_message_exit_container(msg);
 	break;
       }
       case 'h': {
 	int value;
-	::sd_bus_message_read_basic(msg, type, &value);
+	sd_bus_message_read_basic(msg, type, &value);
 	int fd;
 	KJ_SYSCALL(fd = ::fcntl(value, F_DUPFD_CLOEXEC, 3), "dup");
 	field.setUnix(kj::heap<UnixServer>(fd));
@@ -141,17 +141,17 @@ namespace dbus {
       }
       case 'r':
       case '(': {
-	::sd_bus_message_enter_container(msg, SD_BUS_TYPE_STRUCT, contents);
+	sd_bus_message_enter_container(msg, SD_BUS_TYPE_STRUCT, contents);
 	auto content = extract(msg, orphanage);
 	field.adoptStructure(kj::mv(content));
-	::sd_bus_message_exit_container(msg);
+	sd_bus_message_exit_container(msg);
 	break;
       }
       case '{': {
-	::sd_bus_message_enter_container(msg, SD_BUS_TYPE_DICT_ENTRY, contents);
+	sd_bus_message_enter_container(msg, SD_BUS_TYPE_DICT_ENTRY, contents);
 	auto content = extractDictionary(msg, orphanage);
 	field.adoptDictionary(kj::mv(content));
-	::sd_bus_message_exit_container(msg);
+	sd_bus_message_exit_container(msg);
 	break;
       }
       default:
@@ -178,7 +178,7 @@ namespace dbus {
 
       ~Slot() {
 	if (slot_) {
-	  ::sd_bus_slot_unref(slot_);
+	  sd_bus_slot_unref(slot_);
 	}
       }
 
@@ -188,16 +188,16 @@ namespace dbus {
 
     int callback(sd_bus_message* msg, void* userdata, sd_bus_error* err) {
       auto slot = reinterpret_cast<Slot*>(userdata);
-      ::sd_bus_message_ref(msg);
+      sd_bus_message_ref(msg);
       slot->fulfiller_->fulfill(kj::mv(msg));
       return 0;
     }
   }
 
-  kj::Promise<::sd_bus_message*> call(::sd_bus* bus, ::sd_bus_message* msg) {
+  kj::Promise<sd_bus_message*> call(sd_bus* bus, sd_bus_message* msg) {
     auto paf = kj::newPromiseAndFulfiller<sd_bus_message*>();
     auto slot = kj::heap<Slot>(kj::mv(paf.fulfiller));
-    auto err = ::sd_bus_call_async(bus, &slot->slot_, msg, &callback, slot, 0);
+    auto err = sd_bus_call_async(bus, &slot->slot_, msg, &callback, slot, 0);
     KJ_REQUIRE(err >= 0, "sd_bus_call_async");
     return paf.promise.attach(kj::mv(slot));
   }
@@ -280,40 +280,40 @@ namespace dbus {
     using Which = decltype(which);
     switch (which) {
     case Which::BYTE:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "y", field.getByte()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "y", field.getByte()) >= 0);
       break;
     case Which::BOOL:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "b", field.getBool()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "b", field.getBool()) >= 0);
       break;
     case Which::INT16:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "n", field.getInt16()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "n", field.getInt16()) >= 0);
       break;
     case Which::UINT16:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "q", field.getUint16()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "q", field.getUint16()) >= 0);
       break;
     case Which::INT32:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "i", field.getInt32()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "i", field.getInt32()) >= 0);
       break;
     case Which::UINT32:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "u", field.getUint32()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "u", field.getUint32()) >= 0);
       break;
     case Which::INT64:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "x", field.getInt64()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "x", field.getInt64()) >= 0);
       break;
     case Which::UINT64:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "t", field.getUint64()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "t", field.getUint64()) >= 0);
       break;
     case Which::DOUBLE:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "d", field.getDouble()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "d", field.getDouble()) >= 0);
       break;
     case Which::STRING:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "s", field.getString()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "s", field.getString()) >= 0);
       break;
     case Which::OBJECT_PATH:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "o", field.getObjectPath()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "o", field.getObjectPath()) >= 0);
       break;
     case Which::SIGNATURE:
-      KJ_REQUIRE(::sd_bus_message_append(msg, "g", field.getSignature()) >= 0);
+      KJ_REQUIRE(sd_bus_message_append(msg, "g", field.getSignature()) >= 0);
       break;
     case Which::UNIX: {
       return
@@ -321,7 +321,7 @@ namespace dbus {
 	.then(
 	  [msg](auto maybeFd) {
 	    KJ_IF_MAYBE(fd, maybeFd) {
-	      KJ_REQUIRE(::sd_bus_message_append(msg, "h", fd) >= 0);
+	      KJ_REQUIRE(sd_bus_message_append(msg, "h", fd) >= 0);
 	    }
 	  }
 	)
@@ -334,17 +334,17 @@ namespace dbus {
     return kj::READY_NOW;
   }
  
-  void build(Message::Builder builder, ::sd_bus_message* msg) {
-    KJ_IF_MAYBE(value, ::sd_bus_message_get_destination(msg)) {
+  void build(Message::Builder builder, sd_bus_message* msg) {
+    KJ_IF_MAYBE(value, sd_bus_message_get_destination(msg)) {
       builder.setDestination(value);
     }
-    KJ_IF_MAYBE(value, ::sd_bus_message_get_path(msg)) {
+    KJ_IF_MAYBE(value, sd_bus_message_get_path(msg)) {
       builder.setPath(value);
     }
-    KJ_IF_MAYBE(value, ::sd_bus_message_get_interface(msg)) {
+    KJ_IF_MAYBE(value, sd_bus_message_get_interface(msg)) {
       builder.setIface(value);
     }
-    KJ_IF_MAYBE(value, ::sd_bus_message_get_member(msg)) {
+    KJ_IF_MAYBE(value, sd_bus_message_get_member(msg)) {
       builder.setMember(value);
     }
     {

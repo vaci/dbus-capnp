@@ -55,10 +55,10 @@ namespace dbus {
       }
 
       kj::Promise<void> poll() {
-	int fd = ::sd_bus_get_fd(bus_);
-	int events = ::sd_bus_get_events(bus_);
+	int fd = sd_bus_get_fd(bus_);
+	int events = sd_bus_get_events(bus_);
 	uint64_t timeout;
-	KJ_REQUIRE(::sd_bus_get_timeout(bus_, &timeout) >= 0);
+	KJ_REQUIRE(sd_bus_get_timeout(bus_, &timeout) >= 0);
 
 	auto flags = kj::UnixEventPort::FdObserver::OBSERVE_READ_WRITE;
 	auto obs = kj::heap<kj::UnixEventPort::FdObserver>(port_, fd, flags);
@@ -72,7 +72,7 @@ namespace dbus {
 		sd_bus_message* msg;
 		int err;
 		do {
-		  err = ::sd_bus_process(bus_, &msg);
+		  err = sd_bus_process(bus_, &msg);
 		} while (err > 0);
 	      }
 	    )
@@ -102,18 +102,18 @@ namespace dbus {
 
   BusServer::~BusServer() {
     cancel_.cancel(KJ_EXCEPTION(DISCONNECTED));
-    ::sd_bus_close(bus_);
+    sd_bus_close(bus_);
   }
 
   kj::Promise<void> BusServer::call(CallContext ctx) {
-    ::sd_bus_message* call;
-    ::sd_bus_message* reply;
+    sd_bus_message* call;
+    sd_bus_message* reply;
 
     auto params = ctx.getParams();
     auto fields = params.getFields();
 
-    ::sd_bus_message* msg;
-    KJ_REQUIRE(::sd_bus_message_new_method_call(
+    sd_bus_message* msg;
+    KJ_REQUIRE(sd_bus_message_new_method_call(
 	  bus_, &msg,
 	  params.hasDestination() ? params.getDestination().cStr() : nullptr,
 	  params.hasPath() ? params.getPath().cStr() : nullptr,
@@ -133,10 +133,8 @@ namespace dbus {
 	  return
 	    _::call(bus_, msg)
 	    .then(
-		  [ctx = kj::mv(ctx)](auto msg) mutable -> kj::Promise<void> {
-		//::sd_bus_message_dump(msg, stderr, 0);
-		//::sd_bus_message_rewind(msg, 0);
-		if (::sd_bus_message_is_method_error(msg, nullptr)) {
+	      [ctx = kj::mv(ctx)](auto msg) mutable -> kj::Promise<void> {
+		if (sd_bus_message_is_method_error(msg, nullptr)) {
 		  return _::err(msg);
 		}
 		
@@ -188,8 +186,8 @@ namespace dbus {
       auto params = ctx.getParams();
       auto desc = params.getDescription();
       auto reply = ctx.getResults();
-      ::sd_bus* bus;
-      KJ_REQUIRE(::sd_bus_open_user_with_description(&bus, desc.cStr()) >= 0);
+      sd_bus* bus;
+      KJ_REQUIRE(sd_bus_open_user_with_description(&bus, desc.cStr()) >= 0);
       reply.setBus(kj::refcounted<BusServer>(port_, timer_, bus));
       return kj::READY_NOW;
     }
@@ -198,8 +196,8 @@ namespace dbus {
       auto params = ctx.getParams();
       auto desc = params.getDescription();
       auto reply = ctx.getResults();
-      ::sd_bus* bus;
-      KJ_REQUIRE(::sd_bus_open_system_with_description(&bus, desc.cStr()) >= 0);
+      sd_bus* bus;
+      KJ_REQUIRE(sd_bus_open_system_with_description(&bus, desc.cStr()) >= 0);
       reply.setBus(kj::refcounted<BusServer>(port_, timer_, bus));
       return kj::READY_NOW;
     }
