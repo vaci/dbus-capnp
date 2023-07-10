@@ -21,10 +21,10 @@ struct MsgTest
     //KJ_REQUIRE(::sd_bus_new(&bus_) >= 0);
     KJ_REQUIRE(::sd_bus_open_system(&bus_) >= 0);
     KJ_REQUIRE(::sd_bus_message_new_method_call(
-	  bus_, &msg_,
-	  "org.freedesktop.systemd1",
-	  "/org/freedesktop/systemd1",
-	  "org.freedesktop.systemd1.Manager", "ListUnits") >= 0);
+      bus_, &msg_,
+      "org.freedesktop.systemd1",
+      "/org/freedesktop/systemd1",
+      "org.freedesktop.systemd1.Manager", "ListUnits") >= 0);
   }
 
   ~MsgTest() noexcept {
@@ -39,12 +39,10 @@ struct MsgTest
   ::sd_bus_message* msg_;
 };
 
-#ifdef XOUT
 TEST_F(MsgTest, Basic2) {
 
   EXPECT_GE(::sd_bus_message_append(msg_, "s", "a string"), 0);
-
-  ::sd_bus_message_rewind(msg_, 0);
+  EXPECT_EQ(::sd_bus_message_seal(msg_, 0, 0), 0);
   capnp::MallocMessageBuilder mb;
   auto builder = mb.initRoot<Message>();
   _::build(builder, msg_);
@@ -52,7 +50,7 @@ TEST_F(MsgTest, Basic2) {
 
 TEST_F(MsgTest, Basic) {
 
-  EXPECT_GE(0, ::sd_bus_message_append(msg_, "s", "a string"));
+  EXPECT_GE(::sd_bus_message_append(msg_, "s", "a string"), 0);
   
   uint8_t y = 1;
   int16_t n = 2;
@@ -63,15 +61,13 @@ TEST_F(MsgTest, Basic) {
   uint32_t t = 7;
   double d = 8.0;
   EXPECT_GE(::sd_bus_message_append(msg_, "ynqiuxtd", y, n, q, i, u, x, t, d), 0);
-  //::sd_bus_message_seal(msg_, 0, 0);
+  EXPECT_EQ(::sd_bus_message_seal(msg_, 0, 0), 0);
 
-  ::sd_bus_message_rewind(msg_, 0);
   capnp::MallocMessageBuilder mb;
   auto builder = mb.initRoot<Message>();
   _::build(builder, msg_);
 }
 
-#endif
 int main(int argc, char* argv[]) {
   kj::TopLevelProcessContext processCtx{argv[0]};
   processCtx.increaseLoggingVerbosity();

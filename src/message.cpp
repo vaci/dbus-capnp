@@ -169,14 +169,19 @@ namespace dbus {
   namespace {
 
     struct Slot {
+      Slot(kj::Own<kj::PromiseFulfiller<sd_bus_message*>> fulfiller)
+	: fulfiller_{kj::mv(fulfiller)}
+	, slot_{nullptr} {
+      }
+
       ~Slot() {
 	if (slot_) {
 	  ::sd_bus_slot_unref(slot_);
 	}
       }
 
-      sd_bus_slot* slot_{nullptr};
       kj::Own<kj::PromiseFulfiller<sd_bus_message*>> fulfiller_;
+      sd_bus_slot* slot_;
     };
 
     int callback(sd_bus_message* msg, void* userdata, sd_bus_error* err) {
@@ -188,9 +193,8 @@ namespace dbus {
   }
 
   kj::Promise<::sd_bus_message*> call(::sd_bus* bus, ::sd_bus_message* msg) {
-    auto slot = kj::heap<Slot>();
     auto paf = kj::newPromiseAndFulfiller<sd_bus_message*>();
-    slot->fulfiller_ = kj::mv(paf.fulfiller);
+    auto slot = kj::heap<Slot>(kj::mv(paf.fulfiller));
     auto err = ::sd_bus_call_async(bus, &slot->slot_, msg, &callback, slot, 0);
     KJ_REQUIRE(err >= 0, "sd_bus_call_async");
     return paf.promise.attach(kj::mv(slot));
