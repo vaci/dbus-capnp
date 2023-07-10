@@ -1,13 +1,14 @@
+#pragma once
 // Copyright (c) 2023 Vaci Koblizek.
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-#pragma once
 #include "dbus.capnp.h"
 #include <capnp/dynamic.h>
 #include <capnp/orphan.h>
 
-#include <systemd/sd-bus.h>
+struct sd_bus;
+struct sd_bus_message;
 
 namespace dbus {
 

@@ -4,11 +4,14 @@
 
 #include "message.h"
 
+#include <systemd/sd-bus.h>
+
 #include <capnp/message.h>
 
 #include <kj/async-io.h>
 #include <kj/debug.h>
 #include <kj/main.h>
+
 
 #include <gtest/gtest.h>
 

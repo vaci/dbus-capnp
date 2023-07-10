@@ -4,6 +4,8 @@
 
 #include "message.h"
 
+#include <systemd/sd-bus.h>
+
 #include <capnp/dynamic.h>
 #include <capnp/schema.h>
 #include <kj/debug.h>
